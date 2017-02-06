@@ -3,6 +3,7 @@ import facebook
 import csv
 import json
 import string
+import operator
 
 ################################################################################
 # Main Demo Function
@@ -35,18 +36,56 @@ def main():
                 'side': side,
             }
 
-    translation_map = str.maketrans('','',string.punctuation)
 
     for fb_id, obj in sources.items():
-        print(obj.get('name'))
-        response = graph.get_object(fb_id, fields='feed')
-        messages = [item.get('message') for item in response.get('feed', {}).get('data', []) if item.get('message')]
-        print(messages)
-        messages_cleaned = [message.translate(translation_map) for message in messages]
+        print('Fetching feed for {}...'.format(obj.get('name')))
+        try:
+            response = graph.get_object(fb_id, fields='feed,id')
+            message_items = response.get('feed', {}).get('data', [])
 
-        sources[fb_id]['messages'] = messages_cleaned
+            posts = []
+            for item in message_items:
+                item_detail = graph.get_object(item.get('id'), fields='id,link,message,shares')
+                print(json.dumps(item_detail,indent=2))
+                posts.append(item_detail)
 
-        print(messages_cleaned)
+            sources[fb_id]['posts'] = posts
+        except facebook.GraphAPIError as e:
+            print('Unable to get messages for {}({}): {}'.format(obj.get('name'), fb_id, e))
+
+    blue_terms = {}
+    red_terms = {}
+
+    for fb_id, obj in sources.items():
+        side = obj.get('side')
+        messages = [post.get('message', '') for post in obj.get('posts',[])]
+
+        # Merge all messages into one string and remove punctuation from them
+        messages_concated = ' '.join(messages).split(' ')
+        translation_map = str.maketrans('','',string.punctuation)
+        messages_cleaned = messages_concated.translate(translation_map)
+
+        for term in messages_cleaned:
+            if side == 'left':
+                blue_terms[term] = blue_terms.get(term, 0) + 1
+            else:
+                red_terms[term] = red_terms.get(term, 0) + 1
+
+    # Determine terms common between the two sides and remove them from the dictionaries
+    common_terms = set(blue_terms.keys()).intersection(red_terms.keys())
+    for term in common_terms:
+        del blue_terms[term]
+        del red_terms[term]
+
+    # Sort the dictionary into a list of tuples by value
+    blue_sorted = sorted(blue_terms.items(), key=operator.itemgetter(1), reverse=True)
+    red_sorted = sorted(red_terms.items(), key=operator.itemgetter(1), reverse=True)
+
+    print_header('Liberal Terms')
+    print(blue_sorted[:10])
+
+    print_header('Conservative Terms')
+    print(red_sorted[:10])
 
 
 ################################################################################
